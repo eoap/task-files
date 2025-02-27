@@ -1,0 +1,314 @@
+version: '3'
+
+tasks:
+  prepare-kaniko:
+    silent: true
+    cmds: 
+      - |
+        #!/bin/bash
+        set -e
+        engine=$(tomlq -r '.build.engine' project.toml)
+        if [ "$engine" != "cluster" ]; then
+            echo "❌ Build engine is set to \"$engine\", skipping"
+            exit 0
+        fi
+        echo "🚀 Preparing skaffold build configuration"
+        # Define output file
+        OUTPUT_FILE="skaffold-auto.yaml"
+
+        # read the configuration file
+        namespace=$( tomlq -r '.build.cluster.namespace' project.toml )
+        service_account=$( tomlq -r '.build.cluster.serviceAccount' project.toml )
+        secret=$( tomlq -r '.build.cluster.secret' project.toml )
+        registry=$( tomlq -r '.build.cluster.registry' project.toml )
+
+        # Create base YAML structure using yq
+        enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
+          .apiVersion = "skaffold/v4beta9" |
+          .kind = "Config" |
+          .build.tagPolicy.sha256 = {} |
+          .build.cluster.namespace = env(enamespace) |
+          .build.cluster.serviceAccount = env(eservice_account) |
+          .build.cluster.volumes = [{
+            "name": env(esecret),
+            "secret": {
+              "secretName": env(esecret),
+              "items": [{"key": ".dockerconfigjson", "path": "config.json"}]
+            }
+          }] |
+          .build.artifacts = []
+        ' > "$OUTPUT_FILE"
+
+        # Function to generate an artifact block using yq
+        generate_artifact() {
+            local tool="$1"
+            local tool_path="$2"
+
+            etool=$tool etool_path=$tool_path eregistry=$registry esecret=$secret yq e -n '
+              .image = "\(env(eregistry))/\(env(etool))" |
+              .context = env(etool_path) |
+              .kaniko.volumeMounts = [{"name": env(esecret), "mountPath": "kaniko/.docker"}]'
+        }
+
+        #generate_artifact "etool" "etoolpath"
+
+        # Extract tools from project.toml and append them dynamically
+        tomlq -r '.tools | to_entries | .[] | "\(.key) \(.value.context)"' project.toml | while read -r tool tool_path; do
+            t=$( generate_artifact "$tool" "$tool_path" )
+            echo "🔧 Adding build configuration for CommandLineTool $tool"
+            coso=$t yq eval -P ".build.artifacts += env(coso)" -i "$OUTPUT_FILE"
+        done
+
+        echo "✅ Skaffold configuration generated in $OUTPUT_FILE"
+  build-kaniko:
+    silent: true
+    cmds:
+      - defer: rm -fr skaffold-auto.yaml
+      - |
+        engine=$(tomlq -r '.build.engine' project.toml)
+        if [ "$engine" != "cluster" ]; then
+            echo "❌ Build engine is set to \"$engine\", skipping"
+            exit 0
+        fi
+        echo "🚀 Building images with Skaffold..."
+        skaffold build -f skaffold-auto.yaml -v=error -q > build.json 2>/dev/null
+        echo "✅ Images built successfully"
+  update: 
+    silent: true
+    cmds:
+      #- defer: rm -fr build.json
+      - |
+        echo "🚀 Updating CWL files with the new images..."
+        for cwl in $(tomlq -r '.workflows[].path' project.toml); do
+          path=$( echo $cwl | cut -d'#' -f1 )
+            echo "🔧 Updating $path"
+          i=0
+          tomlq -r '.tools | keys[]' project.toml | while read -r tool; do
+            img=$( cat build.json | index=$i yq ".builds[env(index)].tag")
+            img=$( echo $img | sed -E 's/:latest(@sha256:)/\1/' )
+            i=$((i+1))
+            
+            # check if .hints.DockerRequirement is not null
+            result=$(s="${tool}" yq -r '.$graph[] | select(.id == env(s)) | .hints.DockerRequirement' "$path")
+
+            
+            if [ "$result" = "null" ]; then
+                echo "🔧 Updating CommandLineTool ${tool} requirements with image ${img}"
+                s="${tool}" t="${img}" yq -i eval '(.$graph[] | select (.id == env(s)) ).requirements.DockerRequirement.dockerPull = env(t)' -i $path
+            else
+                echo "🔧 Updating CommandLineTool ${tool} hints with image ${img}"
+                s="${tool}" t="${img}" yq -i eval '(.$graph[] | select (.id == env(s)) ).hints.DockerRequirement.dockerPull = env(t)' -i $path
+            fi
+          done
+          echo "✅ CWL workflow $path updated successfully"
+        done
+        echo "✅ CWL workflows updated successfully"
+
+  build-cluster:
+    silent: true
+    cmds:
+    - task: prepare-kaniko
+    - task: build-kaniko
+
+  build-local:
+    silent: true
+    cmds:
+      - |
+        #!/bin/bash
+        engine=$(tomlq -r '.build.engine' project.toml)
+
+        if [ "$engine" != "local" ]; then
+            echo "❌ Build engine is set to \"$engine\", skipping"
+            exit 0
+        fi
+
+        # Initialize build.yaml
+        yq eval -n -o=json '.builds=[]' > build.json
+
+        runtime=$(tomlq -r '.build.local.runtime' project.toml)
+        registry=$(tomlq -r '.build.local.registry' project.toml)
+
+        if [ "$runtime" = "docker" ]; then
+            unset CWLTOOL_OPTIONS
+        elif [ "$runtime" = "podman" ]; then
+            export CWLTOOL_OPTIONS="--podman"
+        else
+            echo "❌ Unsupported runtime: $runtime"
+            exit 1
+        fi
+        echo "🚀 Building images with $runtime..."
+
+        for tool in $(tomlq -r '.tools | keys[]' project.toml); do
+            path=$(tomlq -r ".tools.$tool.context" project.toml)
+            echo "🔧 Building $tool"
+            
+            eval $runtime build -t $registry/$tool $path
+            if [ "$registry" != "localhost" ]; then
+                $runtime push $registry/$tool
+            fi
+            # Extract image ID and manually construct the expected tag format
+            image_id=$(eval $runtime inspect $registry/$tool | yq eval '.[0].Id' -)
+            image_tag="$registry/$tool:latest"
+
+            # Update build.yaml with the new image
+            yq eval -i -o=json  ".builds += [{\"imageName\": \"$registry/$tool\", \"tag\": \"$image_tag\"}]" build.json
+
+            echo "🔧 $tool built"
+        done
+
+        echo "✅ Images built successfully"
+
+  build:
+    silent: true
+    cmds:
+      - task: build-local
+      - task: build-cluster
+      - task: update     
+       
+  test:
+    silent: true
+    cmds:
+      - defer: rm -f params.yaml
+      - |
+        #!/bin/bash
+        set -e
+        engine=$(tomlq -r '.build.engine' project.toml)
+        echo "🚀 Running tests using engine $engine"
+        i=0
+        tomlq -c '.workflows[]' project.toml | while read -r workflow; do
+          path=$(tomlq -r ".workflows[$i].path" project.toml)
+          echo "Workflow Path: $path"
+          tests=$(tomlq -r ".workflows[$i].tests" project.toml)
+
+          if [ "$tests" != "null" ]; then
+            j=0
+            # iterate over the tests
+            tomlq -c ".workflows[$i].tests" project.toml | while read -r test; do
+              test_config=$(tomlq -r ".workflows[$i].tests[$j]" project.toml)
+
+              echo $test_config | jq -r .name
+
+              name=$(echo $test_config | jq -r .name)
+              description=$(echo $test_config | jq -r .description )
+              
+              echo "Test Name: $name"
+              echo "Description: $description"
+              echo "---------------------------"
+              # write params to a file
+              echo $test_config | jq -r .params > params.yaml
+
+              volume=$( echo $test_config | jq -r .execution.paths.volume)
+              mkdir -p $volume
+              if [ "$engine" = "cluster" ]; then
+                cmd=$(printf "%s\n" "calrissian \
+                --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
+                --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
+                --max-ram $(echo "$test_config" | jq -r .execution.cluster.max_ram) \
+                --max-cores \"$(echo "$test_config" | jq -r .execution.cluster.max_cores)\" \
+                --tmp-outdir-prefix ${volume}/$(echo "$test_config" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
+                --usage-report ${volume}/$(echo "$test_config" | jq -r .execution.cluster.usage_report) \
+                --tool-logs-basepath ${volume}/$(echo "$test_config" | jq -r .execution.cluster.tool_logs_basepath) \
+                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \          
+                ${path} \
+                params.yaml")
+              elif [ "$engine" = "local" ]; then
+                runtime=$(tomlq -r '.build.local.runtime' project.toml)
+                if [ "$runtime" = "podman" ]; then
+                    export CWLTOOL_OPTIONS="--podman"
+                fi
+                cmd=$(printf "%s\n" "cwltool \
+                --tmp-outdir-prefix ${volume}/$(echo "$test_config" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
+                --strict-memory-limit \
+                --strict-cpu-limit \
+                ${path} \
+                params.yaml")
+              else
+                echo "❌ Unsupported engine: $engine"
+                exit 1
+              fi
+
+              echo $cmd  
+
+              eval $cmd
+              j=$((j+1))
+            done
+          fi
+
+          i=$((i+1))
+        done
+        echo "✅ Tests passed"
+
+  test-tool:
+    silent: true
+    cmds:
+      - |
+        #!/bin/bash
+        set -e
+        engine=$(tomlq -r '.build.engine' project.toml)
+        echo "🚀 Running tests using engine $engine"
+        i=0
+        var="{{.VAR}}"
+        tomlq -c ".tools.$var" project.toml | while read -r tool; do
+  
+          path=$( echo $tool | jq -r .path)
+
+          echo "tool path: $path"
+          tests=$( echo $tool | jq -r .tests )
+
+          if [ "$tests" != "null" ]; then
+            j=0
+            # iterate over the tests
+            echo "$tool" | jq -c '.tests[]' | while read -r test; do
+
+              name=$(echo $test | jq -r .name)
+              description=$(echo $test | jq -r .description )
+              
+              echo "Test Name: $name"
+              echo "Description: $description"
+              echo "---------------------------"
+              # write params to a file
+              echo $test | jq -r .params > params.yaml
+
+              volume=$( echo $test | jq -r .execution.paths.volume)
+              mkdir -p $volume
+              if [ "$engine" = "cluster" ]; then
+                cmd=$(printf "%s\n" "calrissian \
+                --stdout ${volume}/$(echo "$test" | jq -r .execution.paths.stdout) \
+                --stderr ${volume}/$(echo "$test" | jq -r .execution.paths.stderr) \
+                --max-ram $(echo "$test" | jq -r .execution.cluster.max_ram) \
+                --max-cores \"$(echo "$test" | jq -r .execution.cluster.max_cores)\" \
+                --tmp-outdir-prefix ${volume}/$(echo "$test" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test" | jq -r .execution.paths.outdir) \
+                --usage-report ${volume}/$(echo "$test" | jq -r .execution.cluster.usage_report) \
+                --tool-logs-basepath ${volume}/$(echo "$test" | jq -r .execution.cluster.tool_logs_basepath) \
+                --pod-serviceaccount $(echo "$test" | jq -r .execution.cluster.pod_serviceaccount) \
+                ${path} \
+                params.yaml")
+              elif [ "$engine" = "local" ]; then
+                runtime=$(tomlq -r '.build.local.runtime' project.toml)
+                if [ "$runtime" = "podman" ]; then
+                    export CWLTOOL_OPTIONS="--podman"
+                fi
+
+                cmd=$(printf "%s\n" "cwltool \
+                --tmp-outdir-prefix ${volume}/$(echo "$test" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test" | jq -r .execution.paths.outdir) \
+                --strict-memory-limit \
+                --strict-cpu-limit \
+                ${path} params.yaml")
+              else
+                echo "❌ Unsupported engine: $engine"
+                exit 1
+              fi
+              echo $cmd  
+
+              eval $cmd
+              j=$((j+1))
+            done
+          fi
+
+          i=$((i+1))
+        done
+        echo "✅ Tests passed"    
