@@ -209,7 +209,7 @@ tasks:
                 --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
                 --usage-report ${volume}/$(echo "$test_config" | jq -r .execution.cluster.usage_report) \
                 --tool-logs-basepath ${volume}/$(echo "$test_config" | jq -r .execution.cluster.tool_logs_basepath) \
-                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \          
+                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \
                 ${path} \
                 params.yaml")
               elif [ "$engine" = "local" ]; then
