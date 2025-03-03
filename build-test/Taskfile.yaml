@@ -249,7 +249,7 @@ tasks:
         engine=$(tomlq -r '.build.engine' project.toml)
         echo "🚀 Running tests using engine $engine"
         i=${var}
-        tomlq -c ".workflows[$var] project.toml | while read -r workflow; do
+        tomlq -c ".workflows[$var]" project.toml | while read -r workflow; do
           path=$(tomlq -r ".workflows[$i].path" project.toml)
           echo "Workflow Path: $path"
           tests=$(tomlq -r ".workflows[$i].tests" project.toml)
