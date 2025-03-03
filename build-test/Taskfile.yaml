@@ -185,9 +185,81 @@ tasks:
             # iterate over the tests
             tomlq -c ".workflows[$i].tests" project.toml | while read -r test; do
               test_config=$(tomlq -r ".workflows[$i].tests[$j]" project.toml)
+              
+              name=$(echo $test_config | jq -r .name)
+              description=$(echo $test_config | jq -r .description )
+              
+              echo "Test Name: $name"
+              echo "Description: $description"
+              echo "---------------------------"
+              # write params to a file
+              echo $test_config | jq -r .params > params.yaml
 
-              echo $test_config | jq -r .name
+              volume=$( echo $test_config | jq -r .execution.paths.volume)
+              mkdir -p $volume
+              if [ "$engine" = "cluster" ]; then
+                cmd=$(printf "%s\n" "calrissian \
+                --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
+                --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
+                --max-ram $(echo "$test_config" | jq -r .execution.cluster.max_ram) \
+                --max-cores \"$(echo "$test_config" | jq -r .execution.cluster.max_cores)\" \
+                --tmp-outdir-prefix ${volume}/$(echo "$test_config" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
+                --usage-report ${volume}/$(echo "$test_config" | jq -r .execution.cluster.usage_report) \
+                --tool-logs-basepath ${volume}/$(echo "$test_config" | jq -r .execution.cluster.tool_logs_basepath) \
+                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \
+                ${path} \
+                params.yaml")
+              elif [ "$engine" = "local" ]; then
+                runtime=$(tomlq -r '.build.local.runtime' project.toml)
+                if [ "$runtime" = "podman" ]; then
+                    export CWLTOOL_OPTIONS="--podman"
+                fi
+                cmd=$(printf "%s\n" "cwltool \
+                --tmp-outdir-prefix ${volume}/$(echo "$test_config" | jq -r .execution.paths.tmp_outdir_prefix)/ \
+                --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
+                --strict-memory-limit \
+                --strict-cpu-limit \
+                ${path} \
+                params.yaml")
+              else
+                echo "❌ Unsupported engine: $engine"
+                exit 1
+              fi
 
+              echo $cmd  
+
+              eval $cmd
+              j=$((j+1))
+            done
+          fi
+
+          i=$((i+1))
+        done
+        echo "✅ Tests passed"
+  
+  test-by-index:
+    silent: true
+    cmds:
+      - defer: rm -f params.yaml
+      - |
+        #!/bin/bash
+        set -e
+        var="{{.VAR}}"
+        engine=$(tomlq -r '.build.engine' project.toml)
+        echo "🚀 Running tests using engine $engine"
+        i=${var}
+        tomlq -c ".workflows[$var] project.toml | while read -r workflow; do
+          path=$(tomlq -r ".workflows[$i].path" project.toml)
+          echo "Workflow Path: $path"
+          tests=$(tomlq -r ".workflows[$i].tests" project.toml)
+
+          if [ "$tests" != "null" ]; then
+            j=0
+            # iterate over the tests
+            tomlq -c ".workflows[$i].tests" project.toml | while read -r test; do
+              test_config=$(tomlq -r ".workflows[$i].tests[$j]" project.toml)
+              
               name=$(echo $test_config | jq -r .name)
               description=$(echo $test_config | jq -r .description )
               
