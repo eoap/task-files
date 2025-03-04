@@ -277,7 +277,7 @@ tasks:
               volume=$( echo $test_config | jq -r .execution.paths.volume)
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
-                dask=$(echo "$test" | jq -r .execution.cluster.dask_gateway)
+                dask=$(echo "$test_config" | jq -r .execution.cluster.dask_gateway)
                 echo $dask
                 extra_args=""
                 if [ "$dask" = "true" ]; then
