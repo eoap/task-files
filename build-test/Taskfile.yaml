@@ -276,6 +276,7 @@ tasks:
                 extra_args=""
                 if [ "$dask" = "true"]; then
                   extra_args="--dask-gateway ${DASK_GATEWAY_ADDRESS}"
+                fi
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
@@ -354,6 +355,7 @@ tasks:
                 extra_args=""
                 if [ "$dask" = "true"]; then
                   extra_args="--dask-gateway ${DASK_GATEWAY_ADDRESS}"
+                fi
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test" | jq -r .execution.paths.stderr) \
