@@ -75,7 +75,7 @@ tasks:
   build-kaniko:
     silent: true
     cmds:
-      #- defer: rm -fr skaffold-auto.yaml
+      - defer: rm -fr skaffold-auto.yaml
       - |
         engine=$(tomlq -r '.build.engine' project.toml)
         if [ "$engine" != "cluster" ]; then
@@ -88,7 +88,7 @@ tasks:
   update: 
     silent: true
     cmds:
-      #- defer: rm -fr build.json
+      - defer: rm -fr build.json
       - |
         echo "🚀 Updating CWL files with the new images..."
         for cwl in $(tomlq -r '.workflows[].path' project.toml); do
