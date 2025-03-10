@@ -116,6 +116,9 @@ tasks:
 
   build-cluster:
     silent: true
+    vars: 
+      TTL: 
+        ref: .TTL
     cmds:
     - task: prepare-kaniko
       vars: 
