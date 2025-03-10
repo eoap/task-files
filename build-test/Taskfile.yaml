@@ -7,6 +7,16 @@ tasks:
       - |
         #!/bin/bash
         set -e
+        ttl=${.TTL}
+        echo "TTL $ttl"
+        if [ "$ttl" = "0" ]; then
+            tagpolicy="sha256 = {}"
+        else
+            tagpolicy="envTemplate.template = {{.FOO}}"  
+        fi
+
+        echo $tagpolicy
+
         engine=$(tomlq -r '.build.engine' project.toml)
         if [ "$engine" != "cluster" ]; then
             echo "❌ Build engine is set to \"$engine\", skipping"
@@ -23,10 +33,10 @@ tasks:
         registry=$( tomlq -r '.build.cluster.registry' project.toml )
 
         # Create base YAML structure using yq
-        enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
+        etagpolicy=$tagpolicy enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
           .apiVersion = "skaffold/v4beta9" |
           .kind = "Config" |
-          .build.tagPolicy.sha256 = {} |
+          .build.tagPolicy = env(etagpolicy) |
           .build.cluster.namespace = env(enamespace) |
           .build.cluster.serviceAccount = env(eservice_account) |
           .build.cluster.volumes = [{
@@ -162,9 +172,24 @@ tasks:
     silent: true
     cmds:
       - task: build-local
+        vars:
+          TTL: 0
       - task: build-cluster
+        vars:
+          TTL: 0
       - task: update     
-       
+    
+  build-ttl:
+    silent: true
+    cmds:
+      - task: build-local
+        vars:
+          TTL: 1
+      - task: build-cluster
+        vars:
+          TTL: 1
+      - task: update     
+
   test:
     silent: true
     cmds:
