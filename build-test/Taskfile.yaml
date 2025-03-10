@@ -8,14 +8,16 @@ tasks:
         #!/bin/bash
         set -e
         ttl="{{.TTL}}"
-        echo "TTL $ttl"
+
         if [ "$ttl" = "0" ]; then
             tagpolicy='{"sha256": {}}'
+            secret=$( tomlq -r '.build.cluster.secret' project.toml )
+            registry=$( tomlq -r '.build.cluster.registry' project.toml )
         else
-            tagpolicy='{"envTemplate": {"template": "2h"}}'  
+            tagpolicy='{"envTemplate": {"template": "2h"}}' 
+            secret="ttl-secret" 
+            registry="ttl.sh
         fi
-
-        echo $tagpolicy
 
         engine=$(tomlq -r '.build.engine' project.toml)
         if [ "$engine" != "cluster" ]; then
@@ -29,8 +31,8 @@ tasks:
         # read the configuration file
         namespace=$( tomlq -r '.build.cluster.namespace' project.toml )
         service_account=$( tomlq -r '.build.cluster.serviceAccount' project.toml )
-        secret=$( tomlq -r '.build.cluster.secret' project.toml )
-        registry=$( tomlq -r '.build.cluster.registry' project.toml )
+        
+        
 
         # Create base YAML structure using yq
         etagpolicy=$tagpolicy enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
