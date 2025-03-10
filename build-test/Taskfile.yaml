@@ -16,7 +16,7 @@ tasks:
         else
             tagpolicy='{"envTemplate": {"template": "2h"}}' 
             secret="ttl-secret" 
-            registry="ttl.sh
+            registry="ttl.sh"
         fi
 
         engine=$(tomlq -r '.build.engine' project.toml)
