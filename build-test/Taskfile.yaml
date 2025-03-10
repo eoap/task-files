@@ -73,7 +73,7 @@ tasks:
   build-kaniko:
     silent: true
     cmds:
-      - defer: rm -fr skaffold-auto.yaml
+      #- defer: rm -fr skaffold-auto.yaml
       - |
         engine=$(tomlq -r '.build.engine' project.toml)
         if [ "$engine" != "cluster" ]; then
