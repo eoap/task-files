@@ -315,12 +315,15 @@ tasks:
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
                 dask=$(echo "$test_config" | jq -r .execution.cluster.dask_gateway)
-                echo $dask
+                debug=$(echo "$test_config" | jq -r .execution.cluster.debug)
                 extra_args=""
                 if [ "$dask" = "true" ]; then
                   extra_args="--dask-gateway-url ${DASK_GATEWAY_ADDRESS}"
                 fi
-                echo $extra_args
+                if [ "$debug" = "true" ]; then
+                  extra_args="$extra_args --debug"
+                fi
+                
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
@@ -396,9 +399,13 @@ tasks:
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
                 dask=$(echo "$test" | jq -r .execution.cluster.dask_gateway)
+                debug=$(echo "$test_config" | jq -r .execution.cluster.debug)
                 extra_args=""
                 if [ "$dask" = "true" ]; then
                   extra_args="--dask-gateway-url ${DASK_GATEWAY_ADDRESS}"
+                fi
+                if [ "$debug" = "true" ]; then
+                  extra_args="$extra_args --debug"
                 fi
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test" | jq -r .execution.paths.stdout) \
