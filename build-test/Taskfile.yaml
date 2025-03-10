@@ -10,7 +10,7 @@ tasks:
         ttl="{{.TTL}}"
         echo "TTL $ttl"
         if [ "$ttl" = "0" ]; then
-            tagpolicy='{"sha256": {}''
+            tagpolicy='{"sha256": {}}'
         else
             tagpolicy='{"envTemplate": {"template": "2h"}}'  
         fi
