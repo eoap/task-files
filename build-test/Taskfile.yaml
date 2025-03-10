@@ -118,6 +118,8 @@ tasks:
     silent: true
     cmds:
     - task: prepare-kaniko
+      vars: 
+        TTL: "{{.TTL}}"
     - task: build-kaniko
 
   build-local:
