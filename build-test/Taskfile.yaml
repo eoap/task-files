@@ -119,7 +119,8 @@ tasks:
     cmds:
     - task: prepare-kaniko
       vars: 
-        TTL: "{{.TTL}}"
+        TTL: 
+          ref: .TTL
     - task: build-kaniko
 
   build-local:
