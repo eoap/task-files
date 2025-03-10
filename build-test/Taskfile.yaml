@@ -7,7 +7,7 @@ tasks:
       - |
         #!/bin/bash
         set -e
-        ttl=${.TTL}
+        ttl="{{.TTL}}"
         echo "TTL $ttl"
         if [ "$ttl" = "0" ]; then
             tagpolicy="sha256 = {}"
