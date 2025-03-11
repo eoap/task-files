@@ -7,6 +7,18 @@ tasks:
       - |
         #!/bin/bash
         set -e
+        ttl="{{.TTL}}"
+
+        if [ "$ttl" = "0" ]; then
+            tagpolicy='{"sha256": {}}'
+            secret=$( tomlq -r '.build.cluster.secret' project.toml )
+            registry=$( tomlq -r '.build.cluster.registry' project.toml )
+        else
+            tagpolicy='{"envTemplate": {"template": "2h"}}' 
+            secret="ttl-secret" 
+            registry="ttl.sh"
+        fi
+
         engine=$(tomlq -r '.build.engine' project.toml)
         if [ "$engine" != "cluster" ]; then
             echo "❌ Build engine is set to \"$engine\", skipping"
@@ -19,14 +31,14 @@ tasks:
         # read the configuration file
         namespace=$( tomlq -r '.build.cluster.namespace' project.toml )
         service_account=$( tomlq -r '.build.cluster.serviceAccount' project.toml )
-        secret=$( tomlq -r '.build.cluster.secret' project.toml )
-        registry=$( tomlq -r '.build.cluster.registry' project.toml )
+        
+        
 
         # Create base YAML structure using yq
-        enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
+        etagpolicy=$tagpolicy enamespace=$namespace eservice_account=$service_account esecret=$secret yq eval -n '
           .apiVersion = "skaffold/v4beta9" |
           .kind = "Config" |
-          .build.tagPolicy.sha256 = {} |
+          .build.tagPolicy = env(etagpolicy) |
           .build.cluster.namespace = env(enamespace) |
           .build.cluster.serviceAccount = env(eservice_account) |
           .build.cluster.volumes = [{
@@ -76,7 +88,7 @@ tasks:
   update: 
     silent: true
     cmds:
-      #- defer: rm -fr build.json
+      - defer: rm -fr build.json
       - |
         echo "🚀 Updating CWL files with the new images..."
         for cwl in $(tomlq -r '.workflows[].path' project.toml); do
@@ -106,8 +118,14 @@ tasks:
 
   build-cluster:
     silent: true
+    vars: 
+      TTL: 
+        ref: .TTL
     cmds:
     - task: prepare-kaniko
+      vars: 
+        TTL: 
+          ref: .TTL
     - task: build-kaniko
 
   build-local:
@@ -162,9 +180,24 @@ tasks:
     silent: true
     cmds:
       - task: build-local
+        vars:
+          TTL: 0
       - task: build-cluster
+        vars:
+          TTL: 0
       - task: update     
-       
+    
+  build-ttl:
+    silent: true
+    cmds:
+      - task: build-local
+        vars:
+          TTL: 1
+      - task: build-cluster
+        vars:
+          TTL: 1
+      - task: update     
+
   test:
     silent: true
     cmds:
@@ -198,6 +231,15 @@ tasks:
               volume=$( echo $test_config | jq -r .execution.paths.volume)
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
+                dask=$(echo "$test_config" | jq -r .execution.cluster.dask_gateway)
+                debug=$(echo "$test_config" | jq -r .execution.cluster.debug)
+                extra_args=""
+                if [ "$dask" = "true" ]; then
+                  extra_args="--dask-gateway-url ${DASK_GATEWAY_ADDRESS}"
+                fi
+                if [ "$debug" = "true" ]; then
+                  extra_args="$extra_args --debug"
+                fi
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
@@ -207,7 +249,7 @@ tasks:
                 --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
                 --usage-report ${volume}/$(echo "$test_config" | jq -r .execution.cluster.usage_report) \
                 --tool-logs-basepath ${volume}/$(echo "$test_config" | jq -r .execution.cluster.tool_logs_basepath) \
-                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \
+                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) ${extra_args} \
                 ${path} \
                 params.yaml")
               elif [ "$engine" = "local" ]; then
@@ -272,6 +314,16 @@ tasks:
               volume=$( echo $test_config | jq -r .execution.paths.volume)
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
+                dask=$(echo "$test_config" | jq -r .execution.cluster.dask_gateway)
+                debug=$(echo "$test_config" | jq -r .execution.cluster.debug)
+                extra_args=""
+                if [ "$dask" = "true" ]; then
+                  extra_args="--dask-gateway-url ${DASK_GATEWAY_ADDRESS}"
+                fi
+                if [ "$debug" = "true" ]; then
+                  extra_args="$extra_args --debug"
+                fi
+                
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test_config" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test_config" | jq -r .execution.paths.stderr) \
@@ -281,7 +333,7 @@ tasks:
                 --outdir ${volume}/$(echo "$test_config" | jq -r .execution.paths.outdir) \
                 --usage-report ${volume}/$(echo "$test_config" | jq -r .execution.cluster.usage_report) \
                 --tool-logs-basepath ${volume}/$(echo "$test_config" | jq -r .execution.cluster.tool_logs_basepath) \
-                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) \
+                --pod-serviceaccount $(echo "$test_config" | jq -r .execution.cluster.pod_serviceaccount) ${extra_args} \
                 ${path} \
                 params.yaml")
               elif [ "$engine" = "local" ]; then
@@ -346,6 +398,15 @@ tasks:
               volume=$( echo $test | jq -r .execution.paths.volume)
               mkdir -p $volume
               if [ "$engine" = "cluster" ]; then
+                dask=$(echo "$test" | jq -r .execution.cluster.dask_gateway)
+                debug=$(echo "$test_config" | jq -r .execution.cluster.debug)
+                extra_args=""
+                if [ "$dask" = "true" ]; then
+                  extra_args="--dask-gateway-url ${DASK_GATEWAY_ADDRESS}"
+                fi
+                if [ "$debug" = "true" ]; then
+                  extra_args="$extra_args --debug"
+                fi
                 cmd=$(printf "%s\n" "calrissian \
                 --stdout ${volume}/$(echo "$test" | jq -r .execution.paths.stdout) \
                 --stderr ${volume}/$(echo "$test" | jq -r .execution.paths.stderr) \
@@ -355,7 +416,7 @@ tasks:
                 --outdir ${volume}/$(echo "$test" | jq -r .execution.paths.outdir) \
                 --usage-report ${volume}/$(echo "$test" | jq -r .execution.cluster.usage_report) \
                 --tool-logs-basepath ${volume}/$(echo "$test" | jq -r .execution.cluster.tool_logs_basepath) \
-                --pod-serviceaccount $(echo "$test" | jq -r .execution.cluster.pod_serviceaccount) \
+                --pod-serviceaccount $(echo "$test" | jq -r .execution.cluster.pod_serviceaccount) ${extra_args} \
                 ${path} \
                 params.yaml")
               elif [ "$engine" = "local" ]; then
